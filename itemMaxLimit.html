@@ -1,0 +1,192 @@
+<script>
+    $(document).ready(() => {
+        $("#main_cart table tbody tr[data-limit-event-added=true]")?.removeAttr("data-limit-event-added"); // With each page refresh i need to reset the data so the function would re apply it
+
+        if ($("body").hasClass("layout_item")) {
+            limitAddToCartFromItemPage();
+        }
+
+        if ($("body").hasClass("layout_category") || $("body").hasClass("layout_items")) {
+            limitAddToCartFromCategoriesGrid();
+        }
+
+        if ($("body").hasClass("layout_order")) {
+            limitAddToCartFromCartPage();
+        }
+
+        limitAddToCartFromFloatingCart();
+    });
+
+    $(document).ajaxComplete(function (event, xhr, settings) {
+        if ($("body").hasClass("layout_category") || $("body").hasClass("layout_items")) {
+            limitAddToCartFromCategoriesGrid();
+        }
+    });
+
+    async function limitAddToCartFromItemPage() {
+        const itemId = $("#item_id").val();
+        const itemFromV2 = await fetchData(itemId);
+        const maxLimit = await parseInt(itemFromV2[0].maxLimit);
+
+        if (maxLimit && maxLimit > 0) {
+            plusBtnClickLimit($(".product_quantity > .add_item.quantity"), maxLimit);
+            counterChangeLimit($(".product_quantity input.counter"), maxLimit);
+        }
+
+        // Makes sure that when i add a new item to the floating cart it applies the limit function on it
+        $(".fake_quantity > a.commit_to_real").click(() => {
+            limitAddToCartFromFloatingCart();
+        });
+    }
+
+    async function limitAddToCartFromCategoriesGrid() {
+        const itemIdsInGrid = [];
+        $("#bg_middle .layout_list_item:not([data-limit-event-added=true])").each((i, e) => {
+                const itemId = $(e).attr("id").split("item_id_")[1];
+                itemIdsInGrid.push(itemId);
+            }
+        );
+        
+        if (itemIdsInGrid.length > 0) {
+            const itemsToLimit = await fetchData(itemIdsInGrid);
+            
+            if (itemsToLimit.length > 0) {
+                itemsToLimit.forEach(item => {
+                    const itemInGrid = $(`#bg_middle .layout_list_item#item_id_${item.id}:not([data-limit-event-added=true])`);
+                    
+                    if (itemInGrid.length > 0) {
+                        plusBtnClickLimit(itemInGrid.find(".product_quantity > .add_item.quantity"), item.maxLimit);
+                        counterChangeLimit(itemInGrid.find(".product_quantity input.counter"), item.maxLimit);
+                    }
+
+                    itemInGrid.attr("data-limit-event-added", true)
+                })
+            }
+        }
+    }
+
+    function limitAddToCartFromCartPage() {
+        const itemIdsInCart = [];
+        $("#order_show_cart table.cartTable tbody > tr.line_item_tr:not([data-limit-event-added=true])").each((i, e) => {
+                if ($(e).data("item-id")?.toString().length > 0) {
+                    const itemId = $(e).data("item-id")?.toString();
+                    itemIdsInCart.push(itemId);
+                }
+            }
+        );
+
+        const maxLimitInCartPage = async () => {
+            const itemsFromV2 = await fetchData(itemIdsInCart);
+
+            $("#order_show_cart table.cartTable tbody > tr.line_item_tr:not([data-limit-event-added=true])").each(
+                (i, e) => {
+                    if ($(e).data("item-id")?.toString().length > 0) {
+                        const itemId = $(e).data("item-id")?.toString();
+                        const foundItem = itemsFromV2.find((item) => item.id.toString() === itemId);
+
+                        if (foundItem) {
+                            const maxLimit = parseFloat(foundItem.maxLimit);
+
+                            const currentQuantity = parseFloat($(e).find(".line_item_quantity").val());
+
+                            if (currentQuantity > maxLimit) {
+                                const itemName = $(e).find(".col1 > a > i").text().trim();
+
+                                alert(`לא ניתן לרכוש יותר מ${maxLimit} יחידות מהמוצר: ${itemName}`);
+                                $(e).find(".line_item_quantity").val(maxLimit).trigger("change");
+                            }
+                        }
+
+                        $(e).attr("data-limit-event-added", true);
+                    }
+                }
+            );
+        };
+
+        maxLimitInCartPage();
+    }
+
+    function limitAddToCartFromFloatingCart() {
+        const itemIdsInCart = [];
+        $("#main_cart table tbody tr:not([data-limit-event-added=true])").each((i, e) => {
+            if ($(e).data("id").length > 0) {
+                const itemId = $(e).data("id")?.split("item_id_")[1].split("=>")[0];
+                itemIdsInCart.push(itemId);
+            }
+        });
+
+        const maxLimitInFloatingCart = async () => {
+            const itemsFromV2 = await fetchData(itemIdsInCart);
+
+            $("#main_cart table tbody tr:not([data-limit-event-added=true])").each((i, e) => {
+                if ($(e).data("id").length > 0) {
+                    const itemId = $(e).data("id")?.split("item_id_")[1].split("=>")[0];
+                    const foundItem = itemsFromV2.find((item) => item.id.toString() === itemId);
+
+                    if (foundItem) {
+                        const maxLimit = parseFloat(foundItem.maxLimit);
+
+                        $(e)
+                            .find("a.plus")
+                            .click(() => {
+                                const currentQuantity = parseFloat($(e).find(".quantity").text());
+
+                                if (currentQuantity > maxLimit) {
+                                    alert(`לא ניתן לרכוש יותר מ${maxLimit} יחידות ממוצר זה`);
+                                    $(e).find("a.reduce").click();
+                                }
+                            });
+                    }
+
+                    $(e).attr("data-limit-event-added", true);
+                }
+            });
+        };
+
+        maxLimitInFloatingCart();
+    }
+
+    // GET the data about the current items inside the cart (floating cart included)
+    async function fetchData(itemIds) {
+        const timestamp = Date.now();
+        const url = `{{var.v2Url}}&itemIds=${itemIds}&cache=${timestamp}`;
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error("Failed to fetch item data");
+            }
+            return await response.json();
+        } catch (error) {
+            console.error("There was a problem with the fetch operation:", error);
+        }
+    }
+
+    function plusBtnClickLimit($btnElement, maxLimit) {
+        $btnElement.click((e) => {
+            const $counterElement = $(e.target).closest(".product_quantity").find(".amount_feed > input.counter");
+            const counterVal = parseInt($counterElement.val());
+            if (counterVal > maxLimit) {
+                $counterElement.val(maxLimit);
+                alert(`לא ניתן לרכוש יותר מ${maxLimit} יחידות ממוצר זה`);
+            }
+
+            // Makes sure that when i add a new item to the floating cart it applies the limit function on it
+            if (counterVal === 1) {
+                limitAddToCartFromFloatingCart();
+            }
+        });
+    }
+
+    function counterChangeLimit($counterElement, maxLimit) {
+        // Takes care of the counter change
+        $counterElement.change((e) => {
+            const counterVal = parseInt($(e.target).val());
+
+            if (counterVal > maxLimit) {
+                $(e.target).val(maxLimit).trigger("change");
+                alert(`לא ניתן לרכוש יותר מ${maxLimit} יחידות ממוצר זה`);
+            }
+        });
+    }
+</script>
